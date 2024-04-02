@@ -7,7 +7,7 @@ name = "fits2rgb"
 version = "0.1.1"
 description = "Merge multiple FITS images into a single FITS RGB file."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = {file = "LICENSE"}
 keywords = ["imaging", "FITS", "astronomy"]
 authors = [
@@ -36,11 +36,12 @@ dependencies = [
     "numpy",
     "scipy",
     "astropy",
+    "reproject"
 ]
 
 [project.optional-dependencies]
 test = [
-  "pytest",
+  "pytest", "tqdm"
 ]
 
 [project.urls]

@@ -33,19 +33,24 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import os
 import sys
-import typing
 import argparse
 import json
 
+from typing import Tuple, List, Dict, Union, Any, Optional, Callable
+
 import numpy as np
 
+from reproject import reproject_interp, reproject_exact
+from reproject.mosaicking import find_optimal_celestial_wcs
 
 from astropy.io import fits
 from astropy.wcs import WCS
+from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.stats import sigma_clip
+from astropy import units
 
 
-COMBINE_FUNCTION_DICT = {
+COMBINE_FUNCTION_DICT: Dict[str, Callable] = {
     'mean': np.ma.mean,
     'sum': np.ma.sum,
     'std': np.nanstd,
@@ -54,7 +59,7 @@ COMBINE_FUNCTION_DICT = {
 }
 
 
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: Dict[str, Any] = {
     'channels': {
     },
     'options': {
@@ -62,31 +67,27 @@ DEFAULT_CONFIG = {
         "out-name": "rgb",
         "out-dir": ".",
         "combine-function": "mean",
+        "reproj-method": "exact",
         "nsamples": 1000,
         "max-reject": 5,
         "krej": 5,
         "tile-size": 256,
         "contrast": 5,
-        "gray_level": 0.3
+        "gray-level": 0.3,
+        "color-scale": "log",
+        "out-shape": None,
+        "out-dtype": 'int16'
     }
 }
 
 
-def __args_handler(options: typing.Optional[list] = None):
+def __args_handler(options: Optional[List[str]] = None) -> argparse.Namespace:
     """
     Parse cli arguments.
 
-    Parameters
-    ----------
-    options : list, optional
-        List of cli arguments. If it is None then arguments are read from
-        sys.argv. The default is None.
-
-    Returns
-    -------
-    args : argparse.Namespace
-        The parsed arguments.
-
+    :param options: If it is None then arguments are read from sys.argv.
+        The default is None.
+    :return: The parsed arguments.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -108,43 +109,42 @@ def __args_handler(options: typing.Optional[list] = None):
     return args
 
 
-def apply_func_tiled(data, func, tile_size, *args, **kwargs):
+def apply_func_tiled(
+    data: np.ndarray,
+    func: Callable,
+    tile_size: int,
+    *args,
+    **kwargs
+) -> np.ndarray:
     """
-    Apply a function on a single tile.
-
-    Parameters
-    ----------
-    data : TYPE
-        DESCRIPTION.
-    func : TYPE
-        DESCRIPTION.
-    tile_size : TYPE
-        DESCRIPTION.
-    *args : TYPE
-        DESCRIPTION.
-    **kwargs : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    result : TYPE
-        DESCRIPTION.
-
+    Apply a function on the input data in tiles.
+    :param data: The input data.
+    :param func: The function to be applied.
+    :param tile_size: The size of the tile.
+    :param args: PLACEHOLDER, NOT USED.
+    :param kwargs: PLACEHOLDER, NOT USED.
+    :return: func(data)
     """
-    data_shape = data.shape[-2:]
+    if (len(data.shape) < 2) or (len(data.shape) > 3):
+        raise ValueError("Only 2D and 3D array are supported!")
+
+    data_shape: Tuple[int, ...] = data.shape[-2:]
+
     if isinstance(data, np.ma.MaskedArray):
         result = np.ma.zeros(data_shape)
     else:
         result = np.zeros(data_shape)
-    for j in np.arange(data_shape[0], step=tile_size):
-        for k in np.arange(data_shape[1], step=tile_size):
+
+    for j in np.arange(start=0, stop=data_shape[0], step=tile_size):
+        for k in np.arange(start=0, stop=data_shape[1], step=tile_size):
             if len(data.shape) == 3:
                 tile = data[:, j:j+tile_size, k:k+tile_size]
                 processed_tile = func(tile, *args, axis=0, **kwargs).copy()
-            elif len(data.shape) == 2:
+            else:
                 tile = data[j:j+tile_size, k:k+tile_size]
                 processed_tile = func(tile, *args, **kwargs).copy()
             result[j:j+tile_size, k:k+tile_size] = processed_tile
+
             try:
                 result[j:j+tile_size, k:k+tile_size].mask = processed_tile.mask
             except AttributeError:
@@ -153,36 +153,34 @@ def apply_func_tiled(data, func, tile_size, *args, **kwargs):
     return result
 
 
-def compute_on_tiles(data, func, tile_size, *args, **kwargs):
+def compute_on_tiles(
+    data: np.ndarray,
+    func: Callable,
+    tile_size: int,
+    *args,
+    **kwargs
+) -> List[Any]:
     """
     Execute a function on an image by tiling.
 
-    Parameters
-    ----------
-    data : TYPE
-        DESCRIPTION.
-    func : TYPE
-        DESCRIPTION.
-    tile_size : TYPE
-        DESCRIPTION.
-    *args : TYPE
-        DESCRIPTION.
-    **kwargs : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    results : TYPE
-        DESCRIPTION.
-
+    :param data: The input data.
+    :param func: The function to be applied.
+    :param tile_size: The size of the tile.
+    :param args: PLACEHOLDER, NOT USED.
+    :param kwargs: PLACEHOLDER, NOT USED.
+    :return: A list of values
     """
-    data_hieght, data_width = data.shape[-2:]
+    if (len(data.shape) < 2) or (len(data.shape) > 3):
+        raise ValueError("Only 2D and 3D array are supported!")
+
+    data_shape: Tuple[int, ...] = data.shape[-2:]
     results = []
-    for j in np.arange(data_hieght, step=tile_size):
-        for k in np.arange(data_width, step=tile_size):
+
+    for j in np.arange(start=0, stop=data_shape[0], step=tile_size):
+        for k in np.arange(start=0, stop=data_shape[1], step=tile_size):
             if len(data.shape) == 3:
                 tile = data[:, j:j+tile_size, k:k+tile_size]
-            elif len(data.shape) == 2:
+            else:
                 tile = data[j:j+tile_size, k:k+tile_size]
             try:
                 results.append(func(tile, *args, **kwargs))
@@ -191,45 +189,108 @@ def compute_on_tiles(data, func, tile_size, *args, **kwargs):
     return results
 
 
-def process_images(filenames, combine_function, tile_size, n_samples=1000,
-                   contrast=5, gray_level=0.1, max_reject=5, krej=2.5):
+def get_best_wcs(
+    hdu_list: Union[
+        List[Union[fits.PrimaryHDU, fits.ImageHDU]],
+        List[Tuple[np.ndarray, fits.Header]],
+        List[Tuple[np.ndarray, WCS]],
+    ],
+    target_shape: Optional[Tuple[int, int]] = None
+) -> Tuple[WCS, Tuple[int, int]]:
+    """
+    Get the best WCS for the input HDUs, compatible with the desired out shape.
+    :param hdu_list: A list of HDUs, (array, WCS) or (array, header) tuples.
+    :param target_shape: Optional, the desired width and height.
+    :return: The best WCS and the output shape.
+    """
+    # Get a first guess of the best WCS compatible with the input HDUs
+    first_guess_wcs, first_guess_out_shape = find_optimal_celestial_wcs(
+        hdu_list
+    )
+
+    if target_shape is None:
+        return first_guess_wcs, first_guess_out_shape
+
+    # Get the pixel scale of the first-guess WCS
+    first_guess_pixel_scale = proj_plane_pixel_scales(
+        first_guess_wcs
+    ) * first_guess_wcs.wcs.cunit
+
+    # Define a new pixel scale compatible with the desired output shape
+    scale_parameter = np.array(first_guess_out_shape) / np.array(target_shape)
+    target_resolution = np.min(first_guess_pixel_scale * scale_parameter)
+
+    # Recompute the best WCS with the desired pixel scale
+    out_wcs, out_shape = find_optimal_celestial_wcs(
+        hdu_list,
+        resolution=target_resolution
+    )
+
+    return out_wcs, out_shape
+
+
+def process_images(
+    hdu_list: List[Union[fits.PrimaryHDU, fits.ImageHDU]],
+    out_wcs: WCS,
+    out_shape: Tuple[int, int],
+    combine_function: Callable,
+    reproj_method: str = 'exact',
+    tile_size: int = 256,
+    n_samples: int = 1000,
+    contrast: float = 5.0,
+    gray_level: float = 0.1,
+    color_scale: str = "log",
+    max_reject: float = 5,
+    krej: float = 2.5,
+) -> np.ndarray:
     """
     Process the images.
 
-    Parameters
-    ----------
-    filenames : TYPE
-        DESCRIPTION.
-    combine_function : TYPE
-        DESCRIPTION.
-    tile_size : TYPE
-        DESCRIPTION.
-    n_samples : TYPE, optional
-        DESCRIPTION. The default is 1000.
-    contrast : TYPE, optional
-        DESCRIPTION. The default is 5.
-    gray_level : TYPE, optional
-        DESCRIPTION. The default is 0.1.
-    max_reject : TYPE, optional
-        DESCRIPTION. The default is 5.
-    krej : TYPE, optional
-        DESCRIPTION. The default is 2.5.
-
-    Returns
-    -------
-    rescaled : TYPE
-        DESCRIPTION.
-
+    :param hdu_list:
+    :param out_wcs:
+    :param out_shape:
+    :param combine_function:
+    :param reproj_method:
+    :param tile_size:
+    :param n_samples:
+    :param contrast:
+    :param gray_level:
+    :param color_scale:
+    :param max_reject:
+    :param krej:
+    :return:
     """
-    print(f"  - loading {len(filenames)} files...")
+    if reproj_method == 'exact':
+        reproj_func = reproject_exact
+    elif reproj_method == 'interp':
+        reproj_func = reproject_interp
+    else:
+        reproj_func = None
+
+    rebinned_list = []
+    rebinned_mask_list = []
+
+    print("  - reprojecting images", end='')
+    for a_hdu in hdu_list:
+        sys.stdout.write('.')
+        sys.stdout.flush()
+        if reproj_func is not None:
+            rebinned, rebinned_mask = reproj_func(
+                a_hdu, out_wcs, shape_out=out_shape
+            )
+            rebinned_list.append(rebinned)
+            rebinned_mask_list.append(rebinned_mask)
+        else:
+            rebinned_list.append(a_hdu.data)
+            rebinned_mask_list.append(np.isfinite(a_hdu.data))
+    print("")
 
     channel_data = np.ma.masked_invalid(
-        np.asarray(
-            [
-                fits.getdata(fname)
-                for fname in filenames
-            ]
-        )
+        np.asarray(rebinned_list)
+    )
+
+    channel_mask = np.ma.masked_invalid(
+        np.asarray(rebinned_mask_list)
     )
 
     print("  - processing data...")
@@ -239,15 +300,26 @@ def process_images(filenames, combine_function, tile_size, n_samples=1000,
         tile_size=tile_size,
     )
 
+    result_mask = apply_func_tiled(
+        channel_mask,
+        combine_function,
+        tile_size=tile_size,
+    )
+
     print(
         f"  - log transform (contrast={contrast:.4f}; "
         f"gray={gray_level:.4f})..."
     )
-    log_data = np.log10(1.0 + result - np.ma.min(result))
+
+    color_scale = color_scale.lower()
+    if color_scale == 'log':
+        img_data = np.log10(1.0 + result - np.ma.min(result))
+    else:
+        img_data = result
 
     subsample = np.asarray(
         compute_on_tiles(
-            log_data,
+            img_data,
             lambda x: np.random.choice(
                 np.ravel(x[~x.mask]),
                 size=10
@@ -267,13 +339,18 @@ def process_images(filenames, combine_function, tile_size, n_samples=1000,
     vmin = median_val - contrast*gray_level*std_val
     vmax = median_val + contrast*(1 - gray_level)*std_val
 
+    print(f"  - median={median_val:.4f}  std.dev.={std_val:.4f}")
     print(f"  - vmin={vmin:.4f}  vmax={vmax:.4f}")
-    rescaled = np.clip((log_data.filled(np.nan) - vmin) / (vmax - vmin), 0, 1)
+    rescaled = np.clip(
+        (img_data.filled(np.nan) - vmin) / (vmax - vmin),
+        0,
+        1
+    )
 
-    return rescaled
+    return rescaled, result_mask
 
 
-def main(options: typing.Optional[list] = None):
+def main(options: Optional[List[str]] = None) -> None:
     """
     Run the main program.
 
@@ -289,7 +366,7 @@ def main(options: typing.Optional[list] = None):
 
     """
     args = __args_handler(options)
-    config = DEFAULT_CONFIG.copy()
+    config: Dict[str, Any] = DEFAULT_CONFIG.copy()
 
     if args.dump_defaults:
         config["channels"]['R'] = []
@@ -311,53 +388,149 @@ def main(options: typing.Optional[list] = None):
         print(f"Error opening config file {args.config_file}: {exc}")
         sys.exit(1)
 
-    hdul = [fits.PrimaryHDU()]
+    out_shape: Union[None, Tuple[int, int]]
+    try:
+        out_shape = config['options']['out-shape']
+    except KeyError:
+        out_shape = None
 
-    img_wcs = None
+    hdu_list_data: List[Union[fits.PrimaryHDU, fits.ImageHDU]] = [
+        fits.PrimaryHDU()
+    ]
+    hdu_list_mask: List[Union[fits.PrimaryHDU, fits.ImageHDU]] = [
+        fits.PrimaryHDU()
+    ]
 
-    for channel_name, channel_files in config['channels'].items():
-        print(f"CHANNEL {channel_name}")
+    # Load all files to get the best WCS and output shape
+    open_hdul: List[fits.HDUList] = []
+    channels_dict = {}
 
-        filenames = [
-            os.path.join(config['options']['image-dir'], x)
-            for x in channel_files
+    try:
+        for channel_name, channel_files in config['channels'].items():
+            print(f"Loading files for channel {channel_name}")
+            hlist = []
+            for filename in channel_files:
+                hl = fits.open(
+                    os.path.join(config['options']['image-dir'], filename),
+                    do_not_scale_image_data=True
+                )
+                open_hdul.append(hl)
+                hlist.append(hl[0])
+            channels_dict[channel_name] = hlist
+
+        all_hdus = [
+            hdu for hlist in channels_dict.values() for hdu in hlist
         ]
 
-        if img_wcs is None:
-            img_wcs = WCS(fits.getheader(filenames[0]))
+        # If we don't want to reproject, we must assure that all the images
+        # have the same shape. We assume that they have been already registered
+        if config['options']['reproj-method'] is None:
+            best_shape = None
+            best_wcs = None
+            for hdu in all_hdus:
+                if best_shape is None:
+                    best_shape = hdu.data.shape
+                    best_wcs = WCS(hdu.header)
+                elif out_shape == hdu.data.shape:
+                    raise ValueError(
+                        "Images have different shapes and no reprojection "
+                        "method is used!"
+                    )
+        else:
+            print(f"Target shape: {out_shape}")
+            best_wcs, best_shape = get_best_wcs(
+                hdu_list=all_hdus,
+                target_shape=out_shape
+            )
 
-        result = process_images(
-            filenames,
-            combine_function=COMBINE_FUNCTION_DICT[
-                config['options']['combine-function']
-            ],
-            tile_size=config['options']['tile-size'],
-            n_samples=config['options']['nsamples'],
-            krej=config['options']['krej'],
-            max_reject=config['options']['max-reject'],
-            contrast=config['options']['contrast'],
-            gray_level=config['options']['gray_level'],
-        )
+        print(f"Output shape: {best_shape}")
 
-        hdul.append(
-            fits.ImageHDU(
+        for channel_name, channel_hdu_list in channels_dict.items():
+            print(f"CHANNEL {channel_name}")
+
+            result, result_mask = process_images(
+                channel_hdu_list,
+                out_wcs=best_wcs,
+                out_shape=best_shape,
+                combine_function=COMBINE_FUNCTION_DICT[
+                    config['options']['combine-function']
+                ],
+                reproj_method=config['options']['reproj-method'],
+                tile_size=config['options']['tile-size'],
+                n_samples=config['options']['nsamples'],
+                krej=config['options']['krej'],
+                color_scale=config['options']['color-scale'],
+                max_reject=config['options']['max-reject'],
+                contrast=config['options']['contrast'],
+                gray_level=config['options']['gray-level'],
+            )
+
+            if isinstance(result, np.ma.core.masked_array):
+                result = result.filled(fill_value=np.nan)
+
+            if isinstance(result_mask, np.ma.core.masked_array):
+                result_mask = result_mask.filled(fill_value=np.nan)
+
+            try:
+                out_dtype = config['options']['out-dtype']
+            except KeyError:
+                out_dtype = 'float16'
+            else:
+                out_dtype = out_dtype.lower()
+
+            if out_dtype.startswith('int'):
+                max_val = np.iinfo(np.dtype(out_dtype)).max
+                result = result - np.nanmin(result)
+                result = result * max_val / np.nanmax(result)
+
+                result_mask = result_mask - np.nanmin(result_mask)
+                result_mask = result_mask * max_val / np.nanmax(result_mask)
+
+            channel_hdu = fits.ImageHDU(
                 name=channel_name,
                 data=result,
-                header=img_wcs.to_header()
+                header=best_wcs.to_header()
             )
-        )
 
-    hdul = fits.HDUList(hdul)
-    hdul.writeto(
-        os.path.join(
-            config['options']['out-dir'],
-            config['options']['out-name'] + '.fits'
-        ),
-        overwrite=True
-    )
-    hdul.close()
-    print("DONE!")
+            channel_mask_hdu = fits.ImageHDU(
+                name=channel_name,
+                data=result_mask,
+                header=best_wcs.to_header()
+            )
+
+            if out_dtype.startswith('int'):
+                channel_hdu.scale(out_dtype)
+                channel_mask_hdu.scale(out_dtype)
+
+            hdu_list_data.append(channel_hdu)
+            hdu_list_mask.append(channel_mask_hdu)
+
+        hdul: fits.HDUList = fits.HDUList(hdu_list_data)
+        hdul.writeto(
+            os.path.join(
+                config['options']['out-dir'],
+                config['options']['out-name'] + '.fits'
+            ),
+            overwrite=True
+        )
+        hdul.close()
+
+        hdul: fits.HDUList = fits.HDUList(hdu_list_mask)
+        hdul.writeto(
+            os.path.join(
+                config['options']['out-dir'],
+                config['options']['out-name'] + '_mask.fits'
+            ),
+            overwrite=True
+        )
+        hdul.close()
+        print("DONE!")
+    except Exception as exc:
+        print(f"An error has occured: {str(exc)}")
+
+    for hdul in open_hdul:
+        hdul.close()
 
 
 if __name__ == '__main__':
-    main()
+    main(options=['-c', 'test_res_cfg.json'])
