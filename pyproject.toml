@@ -1,6 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_scheme = "post-release"
+write_to = "src/fits2rgb/_version.py"
 
 [project]
 name = "fits2rgb"
@@ -49,4 +53,4 @@ test = [
 repository = "https://github.com/mauritiusdadd/fits2rgb"
 
 [project.scripts]
-fits2rgb = "fits2rgb:main"
+fits2rgb = "fits2rgb.core:main"

@@ -23,7 +23,7 @@ import unittest
 import numpy as np
 from astropy.io import fits
 
-import fits2rgb
+import fits2rgb.core
 
 # Sample files from https://esahubble.org/projects/fits_liberator/m31data/
 TEST_FILES = [
@@ -119,7 +119,7 @@ class TestFits2Rgb(unittest.TestCase):
         if not os.path.isdir(TEST_DATA_PATH):
             os.makedirs(TEST_DATA_PATH)
 
-        config = fits2rgb.DEFAULT_CONFIG.copy()
+        config = fits2rgb.core.DEFAULT_CONFIG.copy()
         config['channels'] = channels
         config['options']['image-dir'] = TEST_DATA_PATH
         config['options']['out-name'] = 'm31_rgb_log.fits'
@@ -129,7 +129,7 @@ class TestFits2Rgb(unittest.TestCase):
         with open(cfg_fname, 'w') as f:
             json.dump(config, f, indent=2)
 
-        fits2rgb.main(['-c', cfg_fname])
+        fits2rgb.core.main(['-c', cfg_fname])
 
     def test_rgb_lin(self, cfg_fname="test_lin_cfg.json"):
         print("***Testing m31, linear scale, no reprojection***")
@@ -144,17 +144,18 @@ class TestFits2Rgb(unittest.TestCase):
         if not os.path.isdir(TEST_DATA_PATH):
             os.makedirs(TEST_DATA_PATH)
 
-        config = fits2rgb.DEFAULT_CONFIG.copy()
+        config = fits2rgb.core.DEFAULT_CONFIG.copy()
         config['channels'] = channels
         config['options']['image-dir'] = TEST_DATA_PATH
         config['options']['out-name'] = 'm31_rgb_lin.fits'
         config['options']['reproj-method'] = None
         config['options']['color-scale'] = 'lin'
+        config['options']['out-shape'] = None
 
         with open(cfg_fname, 'w') as f:
             json.dump(config, f, indent=2)
 
-        fits2rgb.main(['-c', cfg_fname])
+        fits2rgb.core.main(['-c', cfg_fname])
 
     def test_rgb_res(self, cfg_fname="test_res_cfg.json"):
         print("***Testing m31, log scale, resample***")
@@ -169,7 +170,7 @@ class TestFits2Rgb(unittest.TestCase):
         if not os.path.isdir(TEST_DATA_PATH):
             os.makedirs(TEST_DATA_PATH)
 
-        config = fits2rgb.DEFAULT_CONFIG.copy()
+        config = fits2rgb.core.DEFAULT_CONFIG.copy()
         config['channels'] = channels
         config['options']['image-dir'] = TEST_DATA_PATH
         config['options']['out-name'] = 'm31_rgb_res.fits'
@@ -180,7 +181,7 @@ class TestFits2Rgb(unittest.TestCase):
         with open(cfg_fname, 'w') as f:
             json.dump(config, f, indent=2)
 
-        fits2rgb.main(['-c', cfg_fname])
+        fits2rgb.core.main(['-c', cfg_fname])
 
 if __name__ == '__main__':
     mytest = TestFits2Rgb()

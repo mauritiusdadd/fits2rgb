@@ -31,8 +31,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-import importlib.metadata
-from pkgutil import extend_path
-
-__version__ = importlib.metadata.version("fits2rgb")
-__path__ = extend_path(__path__, __name__)
+try:
+    from fits2rgb._version import version as __version__  # type: ignore
+    from fits2rgb._version import version_tuple  # type: ignore
+except ImportError:
+    __version__ = "unknown"
+    version_tuple = (0, 0, 0, "unknown")

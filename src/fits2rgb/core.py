@@ -51,8 +51,8 @@ from astropy import units
 
 
 COMBINE_FUNCTION_DICT: Dict[str, Callable] = {
-    'mean': np.ma.mean,
-    'sum': np.ma.sum,
+    'mean': np.nanmean,
+    'sum': np.nansum,
     'std': np.nanstd,
     'min': np.nanmin,
     'max': np.nanmax
@@ -527,10 +527,10 @@ def main(options: Optional[List[str]] = None) -> None:
         print("DONE!")
     except Exception as exc:
         print(f"An error has occured: {str(exc)}")
-
-    for hdul in open_hdul:
-        hdul.close()
+    finally:
+        for hdul in open_hdul:
+            hdul.close()
 
 
 if __name__ == '__main__':
-    main(options=['-c', 'test_res_cfg.json'])
+    main()
