@@ -1,4 +1,4 @@
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7808276.svg)](https://doi.org/10.5281/zenodo.7808276)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7808276.svg)](https://doi.org/10.5281/zenodo.7808276) [![Testing](https://github.com/mauritiusdadd/fits2rgb/actions/workflows/test_linux.yml/badge.svg)](https://github.com/mauritiusdadd/fits2rgb/actions/workflows/test_linux.yml)
 # fits2rgb 
 
 A simple program for making coadded RGB FITS images for visualization. 
