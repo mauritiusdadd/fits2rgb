@@ -8,7 +8,7 @@ write_to = "src/fits2rgb/_version.py"
 
 [project]
 name = "fits2rgb"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Merge multiple FITS images into a single FITS RGB file."
 readme = "README.md"
 requires-python = ">=3.8"
