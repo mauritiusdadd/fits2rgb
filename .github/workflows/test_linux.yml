@@ -47,3 +47,5 @@ jobs:
     - name: Running tests
       run: |
         $(which python) -m coverage run -m pytest test/test_fits2rgb.py
+    - name: Coveralls
+      uses: coverallsapp/github-action@v2

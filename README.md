@@ -1,7 +1,13 @@
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7808276.svg)](https://doi.org/10.5281/zenodo.7808276) [![Testing](https://github.com/mauritiusdadd/fits2rgb/actions/workflows/test_linux.yml/badge.svg)](https://github.com/mauritiusdadd/fits2rgb/actions/workflows/test_linux.yml) [![Documentation Status](https://readthedocs.org/projects/fits2rgb/badge/?version=latest)](https://fits2rgb.readthedocs.io/en/latest/?badge=latest)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7808276.svg)](https://doi.org/10.5281/zenodo.7808276) 
+[![Testing](https://github.com/mauritiusdadd/fits2rgb/actions/workflows/test_linux.yml/badge.svg)](https://github.com/mauritiusdadd/fits2rgb/actions/workflows/test_linux.yml)
+[![Documentation Status](https://readthedocs.org/projects/fits2rgb/badge/?version=latest)](https://fits2rgb.readthedocs.io/en/latest/?badge=latest)
+[![Coverage Status](https://coveralls.io/repos/github/mauritiusdadd/fits2rgb/badge.svg)](https://coveralls.io/github/mauritiusdadd/fits2rgb)
+
 # fits2rgb 
 
 A simple program for making coadded RGB FITS images for visualization. 
+
+Full documentation is available at https://fits2rgb.readthedocs.io/en/latest/index.html
 
 # Installation
 
@@ -56,3 +62,24 @@ pip install . --upgrade
 Then run ```pytest``` to check everything is ok.
 
 # Usage
+
+To create a default configuration file, use the command
+
+```
+fits2rgb -d
+```
+
+this will create a file named fits2rgb.json that you can edit to specify how and which files you want to coadd.
+Then you can run the program by simply invoking it from the command line. 
+
+```
+fits2rgb
+```
+
+You can also specify which configuration file to use, for example
+
+```
+fits2rgb -c fits2rgb.json
+```
+
+For more dtails, please refer to the [documentation](https://fits2rgb.readthedocs.io/en/latest/index.html).
