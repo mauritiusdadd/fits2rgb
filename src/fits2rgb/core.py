@@ -35,6 +35,8 @@ import os
 import sys
 import argparse
 import json
+import traceback
+import warnings
 
 from typing import Tuple, List, Dict, Union, Any, Optional, Callable
 
@@ -47,8 +49,11 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.stats import sigma_clip
-from astropy import units
+from astropy.utils.exceptions import AstropyWarning
+from astropy import log
 
+warnings.filterwarnings('ignore', category=UserWarning, append=True)
+warnings.simplefilter('ignore', category=AstropyWarning)
 
 COMBINE_FUNCTION_DICT: Dict[str, Callable] = {
     'mean': np.nanmean,
@@ -101,6 +106,11 @@ def __args_handler(options: Optional[List[str]] = None) -> argparse.Namespace:
         'fits2rgb.json in the current working directory and exit.'
     )
 
+    parser.add_argument(
+        '--verbose', action='store_true', default=False,
+        help='Increase output verbosity'
+    )
+
     if options is not None:
         args = parser.parse_args(options)
     else:
@@ -135,8 +145,10 @@ def apply_func_tiled(
     else:
         result = np.zeros(data_shape)
 
+    prog_total = data_shape[0] * data_shape[1]
     for j in np.arange(start=0, stop=data_shape[0], step=tile_size):
         for k in np.arange(start=0, stop=data_shape[1], step=tile_size):
+
             if len(data.shape) == 3:
                 tile = data[:, j:j+tile_size, k:k+tile_size]
                 processed_tile = func(tile, *args, axis=0, **kwargs).copy()
@@ -149,7 +161,6 @@ def apply_func_tiled(
                 result[j:j+tile_size, k:k+tile_size].mask = processed_tile.mask
             except AttributeError:
                 pass
-
     return result
 
 
@@ -190,23 +201,17 @@ def compute_on_tiles(
 
 
 def get_best_wcs(
-    hdu_list: Union[
-        List[Union[fits.PrimaryHDU, fits.ImageHDU]],
-        List[Tuple[np.ndarray, fits.Header]],
-        List[Tuple[np.ndarray, WCS]],
-    ],
+    data: List[Tuple[np.ndarray, WCS]],
     target_shape: Optional[Tuple[int, int]] = None
 ) -> Tuple[WCS, Tuple[int, int]]:
     """
     Get the best WCS for the input HDUs, compatible with the desired out shape.
-    :param hdu_list: A list of HDUs, (array, WCS) or (array, header) tuples.
+    :param hdu_list: A list of (array shape, WCS).
     :param target_shape: Optional, the desired width and height.
     :return: The best WCS and the output shape.
     """
     # Get a first guess of the best WCS compatible with the input HDUs
-    first_guess_wcs, first_guess_out_shape = find_optimal_celestial_wcs(
-        hdu_list
-    )
+    first_guess_wcs, first_guess_out_shape = find_optimal_celestial_wcs(data)
 
     if target_shape is None:
         return first_guess_wcs, first_guess_out_shape
@@ -222,7 +227,7 @@ def get_best_wcs(
 
     # Recompute the best WCS with the desired pixel scale
     out_wcs, out_shape = find_optimal_celestial_wcs(
-        hdu_list,
+        data,
         resolution=target_resolution
     )
 
@@ -276,7 +281,7 @@ def process_images(
         sys.stdout.flush()
         if reproj_func is not None:
             rebinned, rebinned_mask = reproj_func(
-                a_hdu, out_wcs, shape_out=out_shape
+                a_hdu, out_wcs, shape_out=out_shape, parallel=True
             )
             rebinned_list.append(rebinned)
             rebinned_mask_list.append(rebinned_mask)
@@ -306,12 +311,13 @@ def process_images(
         tile_size=tile_size,
     )
 
+    color_scale = color_scale.lower()
+
     print(
-        f"  - log transform (contrast={contrast:.4f}; "
+        f"  - {color_scale} transform (contrast={contrast:.4f}; "
         f"gray={gray_level:.4f})..."
     )
 
-    color_scale = color_scale.lower()
     if color_scale == 'log':
         img_data = np.log10(1.0 + result - np.ma.min(result))
     else:
@@ -366,6 +372,12 @@ def main(options: Optional[List[str]] = None) -> None:
 
     """
     args = __args_handler(options)
+
+    if args.verbose:
+        log.setLevel('INFO')
+    else:
+        log.setLevel('ERROR')
+
     config: Dict[str, Any] = DEFAULT_CONFIG.copy()
 
     if args.dump_defaults:
@@ -406,28 +418,32 @@ def main(options: Optional[List[str]] = None) -> None:
     channels_dict = {}
 
     try:
-        for channel_name, channel_files in config['channels'].items():
+        for channel_name, channel_info in config['channels'].items():
             print(f"Loading files for channel {channel_name}")
             hlist = []
-            for filename in channel_files:
-                hl = fits.open(
+            for filename, hdu_index in channel_info:
+                hdul = fits.open(
                     os.path.join(config['options']['image-dir'], filename),
                     do_not_scale_image_data=True
                 )
-                open_hdul.append(hl)
-                hlist.append(hl[0])
+                hdu = hdul[hdu_index]
+                hdu_wcs = WCS(header=hdul[hdu_index].header, fobj=hdul)
+                open_hdul.append(hdul)
+                hlist.append((hdu, hdu_wcs))
             channels_dict[channel_name] = hlist
 
-        all_hdus = [
-            hdu for hlist in channels_dict.values() for hdu in hlist
-        ]
+        all_hdus = []
+
+        for hlist in channels_dict.values():
+            for (hdu, hdu_wcs) in hlist:
+                all_hdus.append((hdu, hdu_wcs))
 
         # If we don't want to reproject, we must assure that all the images
         # have the same shape. We assume that they have been already registered
         if config['options']['reproj-method'] is None:
             best_shape = None
             best_wcs = None
-            for hdu in all_hdus:
+            for hdu, hdu_wcs in all_hdus:
                 if best_shape is None:
                     best_shape = hdu.data.shape
                     best_wcs = WCS(hdu.header)
@@ -438,8 +454,12 @@ def main(options: Optional[List[str]] = None) -> None:
                     )
         else:
             print(f"Target shape: {out_shape}")
+
             best_wcs, best_shape = get_best_wcs(
-                hdu_list=all_hdus,
+                data=[
+                    (hdu.data.shape, hdu_wcs)
+                    for (hdu, hdu_wcs) in all_hdus
+                ],
                 target_shape=out_shape
             )
 
@@ -449,7 +469,7 @@ def main(options: Optional[List[str]] = None) -> None:
             print(f"CHANNEL {channel_name}")
 
             result, result_mask = process_images(
-                channel_hdu_list,
+                [hdu for hdu, _ in channel_hdu_list],
                 out_wcs=best_wcs,
                 out_shape=best_shape,
                 combine_function=COMBINE_FUNCTION_DICT[
@@ -526,6 +546,7 @@ def main(options: Optional[List[str]] = None) -> None:
         hdul.close()
         print("DONE!")
     except Exception as exc:
+        traceback.print_exception(exc)
         print(f"An error has occured: {str(exc)}")
     finally:
         for hdul in open_hdul:
@@ -533,4 +554,4 @@ def main(options: Optional[List[str]] = None) -> None:
 
 
 if __name__ == '__main__':
-    main()
+    main(['-c', '/run/media/daddona/android/CLASH-VLT/new_work/imaging/RXJ2129/hst_fits2rgb.json'])

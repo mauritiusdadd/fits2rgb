@@ -111,9 +111,9 @@ class TestFits2Rgb(unittest.TestCase):
         download_test_data()
 
         channels = {
-            'R': ['f001a25o.fits', ],
-            'G': ['f001a1hr.fits', ],
-            'B': ['f001a066.fits', ],
+            'R': [['f001a25o.fits', 0]],
+            'G': [['f001a1hr.fits', 0]],
+            'B': [['f001a066.fits', 0]],
         }
 
         if not os.path.isdir(TEST_DATA_PATH):
@@ -136,9 +136,9 @@ class TestFits2Rgb(unittest.TestCase):
         download_test_data()
 
         channels = {
-            'R': ['f001a25o.fits', ],
-            'G': ['f001a1hr.fits', ],
-            'B': ['f001a066.fits', ],
+            'R': [['f001a25o.fits', 0]],
+            'G': [['f001a1hr.fits', 0]],
+            'B': [['f001a066.fits', 0]],
         }
 
         if not os.path.isdir(TEST_DATA_PATH):
@@ -162,9 +162,9 @@ class TestFits2Rgb(unittest.TestCase):
         download_test_data()
 
         channels = {
-            'R': ['f001a25o.fits', ],
-            'G': ['f001a1hr.fits', ],
-            'B': ['f001a066.fits', ],
+            'R': [['f001a25o.fits', 0]],
+            'G': [['f001a1hr.fits', 0]],
+            'B': [['f001a066.fits', 0]],
         }
 
         if not os.path.isdir(TEST_DATA_PATH):

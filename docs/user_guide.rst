@@ -132,6 +132,6 @@ If we save this to the file ``m31_rgb_log.json``, then we can use the command
 
     fits2rgb -c m31_rgb_log.json
 
-to generate the following RGB FITS image.
+to generate the RGB FITS image ``m31_rgb_res.fits``, and the coaddition mask `m31_rgb_mask.fits`.
 
 .. image:: pics/ds9_m31_rgb.png
