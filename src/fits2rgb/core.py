@@ -42,7 +42,7 @@ from typing import Tuple, List, Dict, Union, Any, Optional, Callable
 
 import numpy as np
 
-from reproject import reproject_interp, reproject_exact
+from reproject import reproject_interp, reproject_exact, reproject_adaptive
 from reproject.mosaicking import find_optimal_celestial_wcs
 
 from astropy.io import fits
@@ -77,6 +77,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max-reject": 5,
         "krej": 5,
         "tile-size": 256,
+        "vmin": "auto",
+        "vmax": "auto",
         "contrast": 5,
         "gray-level": 0.3,
         "color-scale": "log",
@@ -243,6 +245,8 @@ def process_images(
     tile_size: int = 256,
     n_samples: int = 1000,
     contrast: float = 5.0,
+    vmin: Union[str, float] = 'auto',
+    vmax: Union[str, float] = 'auto',
     gray_level: float = 0.1,
     color_scale: str = "log",
     max_reject: float = 5,
@@ -259,27 +263,34 @@ def process_images(
     :param tile_size:
     :param n_samples:
     :param contrast:
+    :param vmin:
+    :param vmax:
     :param gray_level:
     :param color_scale:
     :param max_reject:
     :param krej:
     :return:
     """
+
     if reproj_method == 'exact':
         reproj_func = reproject_exact
     elif reproj_method == 'interp':
         reproj_func = reproject_interp
+    elif reproj_method == 'adaptive':
+        reproj_func = reproject_adaptive
     else:
         reproj_func = None
 
     rebinned_list = []
     rebinned_mask_list = []
 
-    print("  - reprojecting images", end='')
-    for a_hdu in hdu_list:
-        sys.stdout.write('.')
-        sys.stdout.flush()
+    if reproj_func is not None:
+        print("  - reprojecting images..", end='')
+
+    for j, a_hdu in enumerate(hdu_list):
         if reproj_func is not None:
+            sys.stdout.write(f'.{j}')
+            sys.stdout.flush()
             rebinned, rebinned_mask = reproj_func(
                 a_hdu, out_wcs, shape_out=out_shape, parallel=True
             )
@@ -288,7 +299,8 @@ def process_images(
         else:
             rebinned_list.append(a_hdu.data)
             rebinned_mask_list.append(np.isfinite(a_hdu.data))
-    print("")
+    if reproj_func is not None:
+        print("")
 
     channel_data = np.ma.masked_invalid(
         np.asarray(rebinned_list)
@@ -311,21 +323,9 @@ def process_images(
         tile_size=tile_size,
     )
 
-    color_scale = color_scale.lower()
-
-    print(
-        f"  - {color_scale} transform (contrast={contrast:.4f}; "
-        f"gray={gray_level:.4f})..."
-    )
-
-    if color_scale == 'log':
-        img_data = np.log10(1.0 + result - np.ma.min(result))
-    else:
-        img_data = result
-
     subsample = np.asarray(
         compute_on_tiles(
-            img_data,
+            result,
             lambda x: np.random.choice(
                 np.ravel(x[~x.mask]),
                 size=10
@@ -334,24 +334,39 @@ def process_images(
         )
     ).flatten()
 
-    clipped_subsample = sigma_clip(
-        subsample,
-        sigma=max_reject,
-        maxiters=krej
-    )[:n_samples]
-
-    median_val = np.ma.median(clipped_subsample)
-    std_val = np.ma.std(clipped_subsample)
-    vmin = median_val - contrast*gray_level*std_val
-    vmax = median_val + contrast*(1 - gray_level)*std_val
-
-    print(f"  - median={median_val:.4f}  std.dev.={std_val:.4f}")
-    print(f"  - vmin={vmin:.4f}  vmax={vmax:.4f}")
-    rescaled = np.clip(
-        (img_data.filled(np.nan) - vmin) / (vmax - vmin),
-        0,
-        1
+    print(
+        f"  - computing color scale (contrast={contrast:.4f}; "
+        f"gray={gray_level:.4f})..."
     )
+    if (vmin == 'auto') or (vmax == 'auto'):
+        clipped_subsample = sigma_clip(
+            subsample,
+            sigma=max_reject,
+            maxiters=krej
+        )[:n_samples]
+
+        median_val = np.ma.median(clipped_subsample)
+        std_val = np.ma.std(clipped_subsample)
+
+        if vmin == 'auto':
+            vmin = median_val - contrast*gray_level*std_val
+
+        if vmax == 'auto':
+            vmax = median_val + contrast*(1 - gray_level)*std_val
+
+        print(f"  - median={median_val:.4f}  std.dev.={std_val:.4f}")
+
+    print(f"  - vmin={vmin:.4f}  vmax={vmax:.4f}")
+
+    rescaled = (result - vmin) / (vmax - vmin)
+    rescaled = np.clip(rescaled, a_min=0, a_max=1)
+
+    if color_scale.lower() == 'log':
+        print("  - log color scale transform...")
+        rescaled =np.log10(1E-6 + gray_level + rescaled)
+        r_min = np.nanmin(rescaled)
+        r_max = np.nanmax(rescaled)
+        rescaled = (rescaled - r_min) / (r_max - r_min)
 
     return rescaled, result_mask
 
@@ -468,6 +483,16 @@ def main(options: Optional[List[str]] = None) -> None:
         for channel_name, channel_hdu_list in channels_dict.items():
             print(f"CHANNEL {channel_name}")
 
+            if isinstance(config['options']['vmin'], dict):
+                vmin = config['options']['vmin'][channel_name]
+            else:
+                vmin = config['options']['vmin']
+
+            if isinstance(config['options']['vmin'], dict):
+                vmax = config['options']['vmax'][channel_name]
+            else:
+                vmax = config['options']['vmax']
+
             result, result_mask = process_images(
                 [hdu for hdu, _ in channel_hdu_list],
                 out_wcs=best_wcs,
@@ -483,6 +508,8 @@ def main(options: Optional[List[str]] = None) -> None:
                 max_reject=config['options']['max-reject'],
                 contrast=config['options']['contrast'],
                 gray_level=config['options']['gray-level'],
+                vmin=vmin,
+                vmax=vmax
             )
 
             if isinstance(result, np.ma.core.masked_array):
@@ -500,8 +527,7 @@ def main(options: Optional[List[str]] = None) -> None:
 
             if out_dtype.startswith('int'):
                 max_val = np.iinfo(np.dtype(out_dtype)).max
-                result = result - np.nanmin(result)
-                result = result * max_val / np.nanmax(result)
+                result = result * max_val
 
                 result_mask = result_mask - np.nanmin(result_mask)
                 result_mask = result_mask * max_val / np.nanmax(result_mask)
@@ -554,4 +580,4 @@ def main(options: Optional[List[str]] = None) -> None:
 
 
 if __name__ == '__main__':
-    main(['-c', '/run/media/daddona/android/CLASH-VLT/new_work/imaging/RXJ2129/hst_fits2rgb.json'])
+    main()
