@@ -53,7 +53,6 @@ from astropy.stats import sigma_clip
 from astropy.utils.exceptions import AstropyWarning
 from astropy import log
 from astropy.time import Time
-from sage.combinat.sf.kfpoly import weight
 
 from fits2rgb import __version__ as p_vstr
 
