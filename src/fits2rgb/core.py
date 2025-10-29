@@ -38,7 +38,8 @@ import json
 import traceback
 import warnings
 
-from typing import Tuple, List, Dict, Union, Any, Optional, Callable
+from typing import Union, Any, Optional, Callable
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -51,11 +52,15 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.stats import sigma_clip
 from astropy.utils.exceptions import AstropyWarning
 from astropy import log
+from astropy.time import Time
+from sage.combinat.sf.kfpoly import weight
+
+from fits2rgb import __version__ as p_vstr
 
 warnings.filterwarnings('ignore', category=UserWarning, append=True)
 warnings.simplefilter('ignore', category=AstropyWarning)
 
-COMBINE_FUNCTION_DICT: Dict[str, Callable] = {
+COMBINE_FUNCTION_DICT: dict[str, Callable] = {
     'mean': np.nanmean,
     'sum': np.nansum,
     'std': np.nanstd,
@@ -64,7 +69,7 @@ COMBINE_FUNCTION_DICT: Dict[str, Callable] = {
 }
 
 
-DEFAULT_CONFIG: Dict[str, Any] = {
+DEFAULT_CONFIG: dict[str, Any] = {
     'channels': {
     },
     'options': {
@@ -84,11 +89,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "color-scale": "log",
         "out-shape": None,
         "out-dtype": 'int16'
-    }
+    },
+    'meta': {}
 }
 
 
-def __args_handler(options: Optional[List[str]] = None) -> argparse.Namespace:
+def __args_handler(options: Optional[list[str]] = None) -> argparse.Namespace:
     """
     Parse cli arguments.
 
@@ -140,7 +146,7 @@ def apply_func_tiled(
     if (len(data.shape) < 2) or (len(data.shape) > 3):
         raise ValueError("Only 2D and 3D array are supported!")
 
-    data_shape: Tuple[int, ...] = data.shape[-2:]
+    data_shape: tuple[int, ...] = data.shape[-2:]
 
     if isinstance(data, np.ma.MaskedArray):
         result = np.ma.zeros(data_shape)
@@ -172,7 +178,7 @@ def compute_on_tiles(
     tile_size: int,
     *args,
     **kwargs
-) -> List[Any]:
+) -> list[Any]:
     """
     Execute a function on an image by tiling.
 
@@ -186,7 +192,7 @@ def compute_on_tiles(
     if (len(data.shape) < 2) or (len(data.shape) > 3):
         raise ValueError("Only 2D and 3D array are supported!")
 
-    data_shape: Tuple[int, ...] = data.shape[-2:]
+    data_shape: tuple[int, ...] = data.shape[-2:]
     results = []
 
     for j in np.arange(start=0, stop=data_shape[0], step=tile_size):
@@ -203,12 +209,12 @@ def compute_on_tiles(
 
 
 def get_best_wcs(
-    data: List[Tuple[np.ndarray, WCS]],
-    target_shape: Optional[Tuple[int, int]] = None
-) -> Tuple[WCS, Tuple[int, int]]:
+    data: list[tuple[np.ndarray, WCS]],
+    target_shape: Optional[tuple[int, int]] = None
+) -> tuple[WCS, tuple[int, int]]:
     """
     Get the best WCS for the input HDUs, compatible with the desired out shape.
-    :param hdu_list: A list of (array shape, WCS).
+    :param data: A list of (array shape, WCS).
     :param target_shape: Optional, the desired width and height.
     :return: The best WCS and the output shape.
     """
@@ -237,10 +243,11 @@ def get_best_wcs(
 
 
 def process_images(
-    hdu_list: List[Union[fits.PrimaryHDU, fits.ImageHDU]],
+    hdu_list: list[Union[fits.PrimaryHDU, fits.ImageHDU]],
     out_wcs: WCS,
-    out_shape: Tuple[int, int],
+    out_shape: tuple[int, int],
     combine_function: Callable,
+    weights: Optional[list[np.ndarray]] = None,
     reproj_method: str = 'exact',
     tile_size: int = 256,
     n_samples: int = 1000,
@@ -259,6 +266,7 @@ def process_images(
     :param out_wcs:
     :param out_shape:
     :param combine_function:
+    :param weights:
     :param reproj_method:
     :param tile_size:
     :param n_samples:
@@ -271,6 +279,15 @@ def process_images(
     :param krej:
     :return:
     """
+
+    use_weights = False
+    if weights is not None:
+        if (
+            (len(weights) == len(hdu_list)) and
+            all(x is not None for x in weights)
+        ):
+            use_weights = True
+            print("  - using weights...")
 
     if reproj_method == 'exact':
         reproj_func = reproject_exact
@@ -294,11 +311,22 @@ def process_images(
             rebinned, rebinned_mask = reproj_func(
                 a_hdu, out_wcs, shape_out=out_shape, parallel=True
             )
+
             rebinned_list.append(rebinned)
-            rebinned_mask_list.append(rebinned_mask)
+            if use_weights:
+                rebinned_w, _ = reproj_func(
+                    (weights[j], WCS(a_hdu.header)), out_wcs,
+                    shape_out=out_shape, parallel=True
+                )
+                rebinned_mask_list.append(rebinned_w)
+            else:
+                rebinned_mask_list.append(rebinned_mask)
         else:
             rebinned_list.append(a_hdu.data)
             rebinned_mask_list.append(np.isfinite(a_hdu.data))
+            if use_weights:
+                rebinned_mask_list.append(weights[j])
+
     if reproj_func is not None:
         print("")
 
@@ -319,7 +347,7 @@ def process_images(
 
     result_mask = apply_func_tiled(
         channel_mask,
-        combine_function,
+        np.nansum,
         tile_size=tile_size,
     )
 
@@ -371,7 +399,7 @@ def process_images(
     return rescaled, result_mask
 
 
-def main(options: Optional[List[str]] = None) -> None:
+def main(options: Optional[Sequence[str]] = None) -> None:
     """
     Run the main program.
 
@@ -393,7 +421,7 @@ def main(options: Optional[List[str]] = None) -> None:
     else:
         log.setLevel('ERROR')
 
-    config: Dict[str, Any] = DEFAULT_CONFIG.copy()
+    config: dict[str, Any] = DEFAULT_CONFIG.copy()
 
     if args.dump_defaults:
         config["channels"]['R'] = []
@@ -415,28 +443,57 @@ def main(options: Optional[List[str]] = None) -> None:
         print(f"Error opening config file {args.config_file}: {exc}")
         sys.exit(1)
 
-    out_shape: Union[None, Tuple[int, int]]
+    out_shape: Union[None, tuple[int, int]]
     try:
         out_shape = config['options']['out-shape']
     except KeyError:
         out_shape = None
 
-    hdu_list_data: List[Union[fits.PrimaryHDU, fits.ImageHDU]] = [
-        fits.PrimaryHDU()
+    primary_header = fits.Header()
+
+    if 'meta' in config:
+        for key, val in config['meta'].items():
+            primary_header[key] = val
+
+    gen_time: Time = Time.now()
+    primary_header['HISTORY'] = f'RGB image generated with fits2rgb {p_vstr}'
+    primary_header['HISTORY'] = 'https://github.com/mauritiusdadd/fits2rgb'
+    primary_header['HISTORY'] = f'generated on {gen_time.utc.to_string()} UTC'
+
+    hdu_list_data: list[Union[fits.PrimaryHDU, fits.ImageHDU]] = [
+        fits.PrimaryHDU(header=primary_header)
     ]
-    hdu_list_mask: List[Union[fits.PrimaryHDU, fits.ImageHDU]] = [
-        fits.PrimaryHDU()
+    hdu_list_mask: list[Union[fits.PrimaryHDU, fits.ImageHDU]] = [
+        fits.PrimaryHDU(header=primary_header)
     ]
 
     # Load all files to get the best WCS and output shape
-    open_hdul: List[fits.HDUList] = []
+    open_hdul: list[fits.HDUList] = []
     channels_dict = {}
 
     try:
         for channel_name, channel_info in config['channels'].items():
             print(f"Loading files for channel {channel_name}")
             hlist = []
-            for filename, hdu_index in channel_info:
+            for frame_info in channel_info:
+                if isinstance(frame_info, str):
+                    filename = frame_info
+                    hdu_index = 1
+                    w_data = None
+                elif len(frame_info) == 2:
+                    filename = frame_info[0]
+                    hdu_index = frame_info[1]
+                    w_data = None
+                elif len(frame_info) == 4:
+                    filename = frame_info[0]
+                    hdu_index = frame_info[1]
+                    w_data = fits.getdata(
+                        os.path.join(
+                            config['options']['image-dir'], frame_info[2]
+                        ),
+                        ext=frame_info[3]
+                    )
+
                 hdul = fits.open(
                     os.path.join(config['options']['image-dir'], filename),
                     do_not_scale_image_data=True
@@ -444,13 +501,13 @@ def main(options: Optional[List[str]] = None) -> None:
                 hdu = hdul[hdu_index]
                 hdu_wcs = WCS(header=hdul[hdu_index].header, fobj=hdul)
                 open_hdul.append(hdul)
-                hlist.append((hdu, hdu_wcs))
+                hlist.append((hdu, hdu_wcs, w_data))
             channels_dict[channel_name] = hlist
 
         all_hdus = []
 
         for hlist in channels_dict.values():
-            for (hdu, hdu_wcs) in hlist:
+            for (hdu, hdu_wcs, w_data) in hlist:
                 all_hdus.append((hdu, hdu_wcs))
 
         # If we don't want to reproject, we must assure that all the images
@@ -494,7 +551,8 @@ def main(options: Optional[List[str]] = None) -> None:
                 vmax = config['options']['vmax']
 
             result, result_mask = process_images(
-                [hdu for hdu, _ in channel_hdu_list],
+                [hdu for hdu, _, _ in channel_hdu_list],
+                weights = [w_data for _, _, w_data in channel_hdu_list],
                 out_wcs=best_wcs,
                 out_shape=best_shape,
                 combine_function=COMBINE_FUNCTION_DICT[

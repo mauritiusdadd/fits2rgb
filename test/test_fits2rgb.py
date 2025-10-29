@@ -125,6 +125,7 @@ class TestFits2Rgb(unittest.TestCase):
         config['options']['out-name'] = 'm31_rgb_log.fits'
         config['options']['reproj-method'] = 'interp'
         config['options']['color-scale'] = 'log'
+        config['meta']['SCLAE'] = 'LOG'
 
         with open(cfg_fname, 'w') as f:
             json.dump(config, f, indent=2)
@@ -151,6 +152,10 @@ class TestFits2Rgb(unittest.TestCase):
         config['options']['reproj-method'] = None
         config['options']['color-scale'] = 'lin'
         config['options']['out-shape'] = None
+        config['meta']['R'] = 'f001a250'
+        config['meta']['G'] = 'f001a1hr'
+        config['meta']['B'] = 'f001a066'
+        config['meta']['SCLAE'] = 'LIN'
 
         with open(cfg_fname, 'w') as f:
             json.dump(config, f, indent=2)
@@ -177,6 +182,9 @@ class TestFits2Rgb(unittest.TestCase):
         config['options']['reproj-method'] = 'interp'
         config['options']['color-scale'] = 'log'
         config['options']['out-shape'] = (1024, 1024)
+        config['meta']['R'] = 'f001a250'
+        config['meta']['G'] = 'f001a1hr'
+        config['meta']['B'] = 'f001a066'
 
         with open(cfg_fname, 'w') as f:
             json.dump(config, f, indent=2)
